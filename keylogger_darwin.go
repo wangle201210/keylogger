@@ -157,6 +157,7 @@ type KeyEvent struct {
 type KeyEventHandler func(event KeyEvent)
 
 var eventHandler KeyEventHandler
+var eventStorage Storage
 
 // getKeyName 获取键名
 func getKeyName(keyCode int) string {
@@ -167,7 +168,7 @@ func getKeyName(keyCode int) string {
 }
 
 // getModifierFlags 解析修饰键标志，返回修饰键数组
-func getModifierFlags(flags C.int) []string {
+func getModifierFlags(flags int) []string {
 	var modifiers []string
 
 	// 检查各种修饰键 (基于 CGEventFlags)
@@ -195,21 +196,43 @@ func getModifierFlags(flags C.int) []string {
 //
 //export goKeyCallback
 func goKeyCallback(keyCode C.int, isDown C.int, modifierFlags C.int) {
+	event := KeyEvent{
+		KeyCode:       int(keyCode),
+		KeyName:       getKeyName(int(keyCode)),
+		IsDown:        isDown != 0,
+		ModifierFlags: int(modifierFlags),
+	}
+
 	if eventHandler != nil {
-		eventHandler(KeyEvent{
-			KeyCode:       int(keyCode),
-			KeyName:       getKeyName(int(keyCode)),
-			IsDown:        isDown != 0,
-			ModifierFlags: int(modifierFlags),
-		})
+		eventHandler(event)
+	}
+
+	if eventStorage != nil {
+		_ = eventStorage.Save(event)
 	}
 }
 
 // Start 启动键盘监听
 // 需要在单独的 goroutine 中调用
 func Start(handler KeyEventHandler) {
+	StartWithStorage(handler, nil)
+}
+
+// StartWithStorage 启动键盘监听并保存到存储
+// 需要在单独的 goroutine 中调用
+func StartWithStorage(handler KeyEventHandler, storage Storage) {
 	eventHandler = handler
+	eventStorage = storage
 	C.startGlobalKeyListener()
+}
+
+// Stop 停止监听并关闭存储连接
+func Stop() {
+	if eventStorage != nil {
+		_ = eventStorage.Close()
+		eventStorage = nil
+	}
+	eventHandler = nil
 }
 
 // GetKeyName 获取指定键码的键名
@@ -219,5 +242,5 @@ func GetKeyName(keyCode int) string {
 
 // GetModifierFlags 获取修饰键标志的数组表示
 func GetModifierFlags(flags int) []string {
-	return getModifierFlags(C.int(flags))
+	return getModifierFlags(flags)
 }
