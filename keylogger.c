@@ -1,4 +1,66 @@
 #include "keylogger.h"
+#include <stdio.h>
+#include <time.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdarg.h>
+#include <sys/stat.h>
+
+// 日志文件
+static FILE *logFile = NULL;
+
+// 获取日志文件路径
+static void getLogFilePath(char *path, size_t size) {
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(path, size, "%s/.keylogger/keylogger.log", home);
+    } else {
+        snprintf(path, size, "/tmp/keylogger.log");
+    }
+}
+
+// 确保日志目录存在
+static void ensureLogDirectory(const char *logPath) {
+    char dirPath[512];
+    const char *lastSlash = strrchr(logPath, '/');
+    if (lastSlash) {
+        size_t dirLen = lastSlash - logPath;
+        strncpy(dirPath, logPath, dirLen);
+        dirPath[dirLen] = '\0';
+        mkdir(dirPath, 0755);
+    }
+}
+
+// 写日志
+static void writeLog(const char *level, const char *format, ...) {
+    if (!logFile) {
+        char logPath[512];
+        getLogFilePath(logPath, sizeof(logPath));
+
+        // 确保日志目录存在
+        ensureLogDirectory(logPath);
+
+        logFile = fopen(logPath, "a");
+        if (!logFile) {
+            return;
+        }
+    }
+
+    // 获取当前时间
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char timestamp[64];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info);
+
+    // 写日志
+    va_list args;
+    va_start(args, format);
+    fprintf(logFile, "[%s] [%s] ", timestamp, level);
+    vfprintf(logFile, format, args);
+    fprintf(logFile, "\n");
+    fflush(logFile);
+    va_end(args);
+}
 
 // Go函数声明
 extern void goKeyCallback(int keyCode, int isDown, int modifierFlags);
@@ -20,6 +82,9 @@ static CGEventRef eventTapCallback(
         isDown = (type == kCGEventKeyDown) ? 1 : 0;
         modifiers = CGEventGetFlags(event);
 
+        writeLog("DEBUG", "键盘事件: type=%s, keyCode=%lld, isDown=%lld, modifiers=%lld",
+                 type == kCGEventKeyDown ? "KeyDown" : "KeyUp", keyCode, isDown, modifiers);
+
         // 调用 Go 函数处理
         goKeyCallback((int)keyCode, (int)isDown, (int)modifiers);
     }
@@ -36,6 +101,7 @@ static CGEventRef eventTapCallback(
         // 只有当 Caps Lock 状态改变时才触发
         if (capsLockIsOn != capsLockWasOn && keyCode == 0x39) {
             isDown = capsLockIsOn ? 1 : 0;
+            writeLog("DEBUG", "Caps Lock 状态改变: isDown=%lld", isDown);
             goKeyCallback((int)keyCode, (int)isDown, (int)modifiers);
             capsLockWasOn = capsLockIsOn;
         }
@@ -46,6 +112,9 @@ static CGEventRef eventTapCallback(
 
 // 启动监听的 C 函数实现
 int startGlobalKeyListener() {
+    writeLog("INFO", "========================================");
+    writeLog("INFO", "开始初始化全局键盘监听");
+
     CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged);
     CFMachPortRef eventTap = CGEventTapCreate(
         kCGSessionEventTap,     // 监听整个用户会话
@@ -57,9 +126,11 @@ int startGlobalKeyListener() {
     );
 
     if (!eventTap) {
-        NSLog(@"创建事件监听失败！请检查辅助功能权限。");
+        writeLog("ERROR", "创建事件监听失败！请检查辅助功能权限。");
         return 0;
     }
+
+    writeLog("INFO", "事件监听器创建成功");
 
     CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(
         kCFAllocatorDefault,
@@ -68,7 +139,9 @@ int startGlobalKeyListener() {
     );
     CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
     CGEventTapEnable(eventTap, true);
-    NSLog(@"全局键盘监听已启动");
+
+    writeLog("INFO", "全局键盘监听已启动，进入事件循环");
+
     CFRunLoopRun(); // 阻塞，进入事件循环
     return 1;
 }
