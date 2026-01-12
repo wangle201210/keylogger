@@ -145,3 +145,68 @@ int startGlobalKeyListener() {
     CFRunLoopRun(); // 阻塞，进入事件循环
     return 1;
 }
+
+// 检查是否有辅助功能权限
+int checkAccessibilityPermission() {
+    writeLog("INFO", "检查辅助功能权限");
+
+    // 方法1：使用 AXIsProcessTrustedWithOptions 快速检查
+    CFMutableDictionaryRef options = CFDictionaryCreateMutable(
+        kCFAllocatorDefault,
+        1,
+        &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks
+    );
+
+    CFDictionaryAddValue(
+        options,
+        kAXTrustedCheckOptionPrompt,
+        kCFBooleanFalse
+    );
+
+    Boolean trusted = AXIsProcessTrustedWithOptions(options);
+    CFRelease(options);
+
+    if (!trusted) {
+        writeLog("INFO", "辅助功能权限: 未授权");
+        return 0;
+    }
+
+    // 方法2：尝试创建事件 tap 来真正验证权限
+    // 这样可以检测签名改变导致的权限失效问题
+    CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown);
+    CFMachPortRef testTap = CGEventTapCreate(
+        kCGSessionEventTap,
+        kCGHeadInsertEventTap,
+        kCGEventTapOptionDefault,
+        eventMask,
+        eventTapCallback,
+        NULL
+    );
+
+    if (!testTap) {
+        writeLog("INFO", "辅助功能权限: 已失效（签名改变）");
+        return 0;
+    }
+
+    // 成功创建，说明真的有权限
+    CFRelease(testTap);
+    writeLog("INFO", "辅助功能权限: 已授权且有效");
+    return 1;
+}
+
+// 打开系统设置的辅助功能页面
+void openAccessibilitySettings() {
+    writeLog("INFO", "打开系统设置的辅助功能页面");
+
+    // macOS 13 (Ventura) 及以上版本使用新的设置路径
+    if (@available(macOS 13.0, *)) {
+        // 打开系统设置 > 隐私与安全性 > 辅助功能
+        NSURL *settingsURL = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+        [[NSWorkspace sharedWorkspace] openURL:settingsURL];
+    } else {
+        // macOS 12 (Monterey) 及以下版本使用旧的设置路径
+        NSURL *settingsURL = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+        [[NSWorkspace sharedWorkspace] openURL:settingsURL];
+    }
+}

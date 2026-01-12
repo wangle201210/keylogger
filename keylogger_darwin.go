@@ -8,7 +8,10 @@ package keylogger
 #include "keylogger.h"
 */
 import "C"
-import "fmt"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 // macOS 键码映射表 (基于官方 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h)
 var keyCodeMap = map[int]string{
@@ -159,6 +162,10 @@ type KeyEventHandler func(event KeyEvent)
 var eventHandler KeyEventHandler
 var eventStorage Storage
 
+// isRunning 用于防止重复启动键盘监听
+// 使用 int32 而不是 bool 以支持原子操作
+var isRunning int32 // 0 = 未运行, 1 = 运行中
+
 // getKeyName 获取键名
 func getKeyName(keyCode int) string {
 	if name, ok := keyCodeMap[keyCode]; ok {
@@ -221,6 +228,12 @@ func Start(handler KeyEventHandler) {
 // StartWithStorage 启动键盘监听并保存到存储
 // 需要在单独的 goroutine 中调用
 func StartWithStorage(handler KeyEventHandler, storage Storage) {
+	// 使用原子操作检查并设置运行状态，防止重复启动
+	if !atomic.CompareAndSwapInt32(&isRunning, 0, 1) {
+		// 如果已经在运行，直接返回
+		return
+	}
+
 	eventHandler = handler
 	eventStorage = storage
 	C.startGlobalKeyListener()
@@ -233,6 +246,8 @@ func Stop() {
 		eventStorage = nil
 	}
 	eventHandler = nil
+	// 重置运行状态
+	atomic.StoreInt32(&isRunning, 0)
 }
 
 // GetKeyName 获取指定键码的键名
@@ -243,4 +258,16 @@ func GetKeyName(keyCode int) string {
 // GetModifierFlags 获取修饰键标志的数组表示
 func GetModifierFlags(flags int) []string {
 	return getModifierFlags(flags)
+}
+
+// CheckAccessibilityPermission 检查是否有辅助功能权限
+// 返回 true 表示有权限，false 表示无权限
+func CheckAccessibilityPermission() bool {
+	result := C.checkAccessibilityPermission()
+	return result != 0
+}
+
+// OpenAccessibilitySettings 打开系统设置的辅助功能页面
+func OpenAccessibilitySettings() {
+	C.openAccessibilitySettings()
 }
